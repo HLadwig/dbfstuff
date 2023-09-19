@@ -81,12 +81,55 @@ fn get_field_header_as_csv(fields: &Vec<DbfFields>) -> String {
 fn get_record_as_csv(bytes: &[u8], fields: &Vec<DbfFields>) -> String {
     let mut result: String = String::from("");
     for field in fields {
-        let content =
-            latin1_to_string(&bytes[field.displacement..field.displacement + field.length]);
+        let content = get_field_content_as_string(
+            &bytes[field.displacement..field.displacement + field.length],
+            &field.fieldtype,
+        );
         result.push_str(&content.trim());
         result.push(';');
     }
     String::from(result.trim_end_matches(';'))
+}
+
+fn get_field_content_as_string(bytes: &[u8], fieldtype: &char) -> String {
+    match fieldtype {
+        'C' => latin1_to_string(bytes),
+        'D' => {
+            let yyyymmdd = latin1_to_string(bytes);
+            if yyyymmdd.trim().len() != 8 {
+                String::from("")
+            } else {
+                format!(
+                    "{}.{}.{}",
+                    &yyyymmdd[6..8],
+                    &yyyymmdd[4..6],
+                    &yyyymmdd[0..4]
+                )
+            }
+        }
+        'F' => String::from("missing implementation for float"),
+        'N' => String::from("missing implementation for number"),
+        'L' => {
+            let value = latin1_to_string(bytes);
+            match value.as_str() {
+                "y" | "Y" | "t" | "T" => String::from("true"),
+                "n" | "N" | "f" | "F" => String::from("false"),
+                _ => String::from(""),
+            }
+        }
+        'T' => String::from("missing implementation for time"),
+        'I' => String::from("missing implementation for int"),
+        'Y' => String::from("missing implementation for currency"),
+        'M' => String::from("missing implementation for memo"),
+        'B' => String::from("missing implementation for double"),
+        'G' => String::from("missing implementation for general"),
+        'P' => String::from("missing implementation for picture"),
+        '+' => String::from("missing implementation for autoinc"),
+        'O' => String::from("missing implementation for double"),
+        '@' => String::from("missing implementation for timestamp"),
+        'V' => String::from("missing implementation for varchar"),
+        _ => String::from("missing implementation unknown fieldtype"),
+    }
 }
 
 fn latin1_to_string(latin1_data: &[u8]) -> String {
@@ -109,6 +152,7 @@ fn main() {
         let startbyte =
             (header.bytes_header as u32 + linenumber * header.bytes_record as u32) as usize;
         let endbyte = (startbyte + header.bytes_record as usize) as usize;
+
         println!(
             "Zeile {}: {:?}",
             linenumber,
