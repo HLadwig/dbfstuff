@@ -58,7 +58,7 @@ fn get_sizes_for_header(bytes: &[u8]) -> usize {
 
 fn get_fields(bytes: &[u8]) -> Vec<DbfFields> {
     let mut next_field_record_startbyte = 32;
-    let field_definition_end_marker = 13;
+    let field_definition_end_marker = 0x0D;
     let mut result = vec![];
     while *&bytes[next_field_record_startbyte] != field_definition_end_marker {
         let field =
@@ -93,7 +93,7 @@ fn get_record_as_csv(bytes: &[u8], fields: &Vec<DbfFields>) -> String {
 
 fn get_field_content_as_string(bytes: &[u8], fieldtype: &char) -> String {
     match fieldtype {
-        'C' => latin1_to_string(bytes),
+        'C' | 'N' => latin1_to_string(bytes),
         'D' => {
             let yyyymmdd = latin1_to_string(bytes);
             if yyyymmdd.trim().len() != 8 {
@@ -108,7 +108,6 @@ fn get_field_content_as_string(bytes: &[u8], fieldtype: &char) -> String {
             }
         }
         'F' => String::from("missing implementation for float"),
-        'N' => String::from("missing implementation for number"),
         'L' => {
             let value = latin1_to_string(bytes);
             match value.as_str() {
@@ -118,9 +117,20 @@ fn get_field_content_as_string(bytes: &[u8], fieldtype: &char) -> String {
             }
         }
         'T' => String::from("missing implementation for time"),
-        'I' => String::from("missing implementation for int"),
+        'I' => u32::from_le_bytes(bytes.try_into().unwrap()).to_string(),
         'Y' => String::from("missing implementation for currency"),
-        'M' => String::from("missing implementation for memo"),
+        'M' => {
+            if bytes.len() == 4 {
+                let block_number = u32::from_le_bytes(bytes.try_into().unwrap()).to_string();
+                if block_number != "0" {
+                    format!("MemoBlockVerweis:{}", block_number)
+                } else {
+                    String::from("")
+                }
+            } else {
+                latin1_to_string(bytes)
+            }
+        }
         'B' => String::from("missing implementation for double"),
         'G' => String::from("missing implementation for general"),
         'P' => String::from("missing implementation for picture"),
@@ -141,7 +151,8 @@ fn latin1_to_string(latin1_data: &[u8]) -> String {
 }
 
 fn main() {
-    let dbffile = std::fs::read("c:/Users/Hagen/RustProjects/dbfstuff/testdata/amf.dbf").unwrap();
+    let dbffile =
+        std::fs::read("c:/Users/Hagen/RustProjects/dbfstuff/testdata/contacth.dbf").unwrap();
     let header = DbfHeader::new(&dbffile[0..32]);
     let fields = get_fields(&dbffile);
     let field_header = get_field_header_as_csv(&fields);
