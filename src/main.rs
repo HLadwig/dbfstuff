@@ -12,9 +12,22 @@ impl DbfHeader {
         Self {
             _version: bytes[0],
             _last_update: get_date_for_header(&bytes[1..4]),
-            records: get_sizes_for_header(&bytes[4..8]) as u32,
-            bytes_header: get_sizes_for_header(&bytes[8..10]) as u16,
-            bytes_record: get_sizes_for_header(&bytes[10..12]) as u16,
+            records: u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            bytes_header: u16::from_le_bytes(bytes[8..10].try_into().unwrap()),
+            bytes_record: u16::from_le_bytes(bytes[10..12].try_into().unwrap()),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MemoHeader {
+    block_size: u16,
+}
+
+impl MemoHeader {
+    fn new(bytes: &[u8]) -> Self {
+        Self {
+            block_size: u16::from_le_bytes(bytes[6..8].try_into().unwrap()),
         }
     }
 }
@@ -78,12 +91,19 @@ fn get_field_header_as_csv(fields: &Vec<DbfFields>) -> String {
     String::from(result.trim_end_matches(';'))
 }
 
-fn get_record_as_csv(bytes: &[u8], fields: &Vec<DbfFields>) -> String {
+fn get_record_as_csv(
+    bytes: &[u8],
+    fields: &Vec<DbfFields>,
+    memos: &[u8],
+    memo_blocksize: &u16,
+) -> String {
     let mut result: String = String::from("");
     for field in fields {
         let content = get_field_content_as_string(
             &bytes[field.displacement..field.displacement + field.length],
             &field.fieldtype,
+            memos,
+            memo_blocksize,
         );
         result.push_str(&content.trim());
         result.push(';');
@@ -91,7 +111,18 @@ fn get_record_as_csv(bytes: &[u8], fields: &Vec<DbfFields>) -> String {
     String::from(result.trim_end_matches(';'))
 }
 
-fn get_field_content_as_string(bytes: &[u8], fieldtype: &char) -> String {
+fn get_memo_content(bytes: &[u8], block: u32, memo_blocksize: &u16) -> String {
+    let startbyte = (block * 64) as usize;
+    let length = u32::from_be_bytes(bytes[startbyte + 4..startbyte + 8].try_into().unwrap());
+    latin1_to_string(&bytes[startbyte + 8..startbyte + 8 + length as usize])
+}
+
+fn get_field_content_as_string(
+    bytes: &[u8],
+    fieldtype: &char,
+    memos: &[u8],
+    memo_blocksize: &u16,
+) -> String {
     match fieldtype {
         'C' | 'N' => latin1_to_string(bytes),
         'D' => {
@@ -120,15 +151,17 @@ fn get_field_content_as_string(bytes: &[u8], fieldtype: &char) -> String {
         'I' => u32::from_le_bytes(bytes.try_into().unwrap()).to_string(),
         'Y' => String::from("missing implementation for currency"),
         'M' => {
+            let mut block_number: u32 = 0;
             if bytes.len() == 4 {
-                let block_number = u32::from_le_bytes(bytes.try_into().unwrap()).to_string();
-                if block_number != "0" {
-                    format!("MemoBlockVerweis:{}", block_number)
-                } else {
-                    String::from("")
-                }
+                block_number = u32::from_le_bytes(bytes.try_into().unwrap());
             } else {
-                latin1_to_string(bytes)
+                let block_string = latin1_to_string(bytes);
+                block_number = u32::from_str_radix(&block_string, 10).unwrap();
+            }
+            if block_number == 0 {
+                String::from("")
+            } else {
+                get_memo_content(memos, block_number, memo_blocksize)
             }
         }
         'B' => String::from("missing implementation for double"),
@@ -151,11 +184,13 @@ fn latin1_to_string(latin1_data: &[u8]) -> String {
 }
 
 fn main() {
-    let dbffile =
-        std::fs::read("c:/Users/Hagen/RustProjects/dbfstuff/testdata/contacth.dbf").unwrap();
+    let dbffile = std::fs::read("c:/Users/Hagen/RustProjects/dbfstuff/testdata/ama.dbf").unwrap();
+    let memofile = std::fs::read("c:/Users/Hagen/RustProjects/dbfstuff/testdata/ama.fpt").unwrap();
     let header = DbfHeader::new(&dbffile[0..32]);
     let fields = get_fields(&dbffile);
     let field_header = get_field_header_as_csv(&fields);
+    let memo_header = MemoHeader::new(&memofile[0..512]);
+    println!("{:?}", memo_header);
     println!("{}", field_header);
     let mut linenumber = 0;
     //println!("{}", header._last_update);
@@ -167,7 +202,12 @@ fn main() {
         println!(
             "Zeile {}: {:?}",
             linenumber,
-            get_record_as_csv(&dbffile[startbyte..endbyte], &fields)
+            get_record_as_csv(
+                &dbffile[startbyte..endbyte],
+                &fields,
+                &memofile,
+                &memo_header.block_size
+            )
         );
         //let s = String::from_utf8_lossy(&dbffile[startbyte..endbyte]);
         //println!("Als UTF8: {}", s);
