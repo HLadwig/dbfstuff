@@ -27,7 +27,7 @@ struct MemoHeader {
 impl MemoHeader {
     fn new(bytes: &[u8]) -> Self {
         Self {
-            block_size: u16::from_le_bytes(bytes[6..8].try_into().unwrap()),
+            block_size: u16::from_be_bytes(bytes[6..8].try_into().unwrap()),
         }
     }
 }
@@ -112,7 +112,7 @@ fn get_record_as_csv(
 }
 
 fn get_memo_content(bytes: &[u8], block: u32, memo_blocksize: &u16) -> String {
-    let startbyte = (block * 64) as usize;
+    let startbyte = (block * *memo_blocksize as u32) as usize;
     let length = u32::from_be_bytes(bytes[startbyte + 4..startbyte + 8].try_into().unwrap());
     latin1_to_string(&bytes[startbyte + 8..startbyte + 8 + length as usize])
 }
