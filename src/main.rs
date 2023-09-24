@@ -151,7 +151,7 @@ fn get_field_content_as_string(
         'I' => u32::from_le_bytes(bytes.try_into().unwrap()).to_string(),
         'Y' => String::from("missing implementation for currency"),
         'M' => {
-            let mut block_number: u32 = 0;
+            let block_number: u32;
             if bytes.len() == 4 {
                 block_number = u32::from_le_bytes(bytes.try_into().unwrap());
             } else {
@@ -190,27 +190,23 @@ fn main() {
     let fields = get_fields(&dbffile);
     let field_header = get_field_header_as_csv(&fields);
     let memo_header = MemoHeader::new(&memofile[0..512]);
-    println!("{:?}", memo_header);
-    println!("{}", field_header);
     let mut linenumber = 0;
-    //println!("{}", header._last_update);
+    let mut allcsv = field_header.clone();
     while linenumber < header.records {
         let startbyte =
             (header.bytes_header as u32 + linenumber * header.bytes_record as u32) as usize;
         let endbyte = (startbyte + header.bytes_record as usize) as usize;
-
-        println!(
-            "Zeile {}: {:?}",
-            linenumber,
-            get_record_as_csv(
-                &dbffile[startbyte..endbyte],
-                &fields,
-                &memofile,
-                &memo_header.block_size
-            )
-        );
-        //let s = String::from_utf8_lossy(&dbffile[startbyte..endbyte]);
-        //println!("Als UTF8: {}", s);
+        allcsv.push_str(&get_record_as_csv(
+            &dbffile[startbyte..endbyte],
+            &fields,
+            &memofile,
+            &memo_header.block_size,
+        ));
         linenumber += 1;
     }
+    std::fs::write(
+        "c:/Users/Hagen/RustProjects/dbfstuff/testdata/ama.csv",
+        allcsv,
+    )
+    .unwrap();
 }
