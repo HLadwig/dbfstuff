@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::PathBuf;
+
 #[derive(Debug)]
 struct DbfHeader {
     _version: u8,
@@ -94,7 +97,7 @@ fn get_field_header_as_csv(fields: &Vec<DbfFields>) -> String {
 fn get_record_as_csv(
     bytes: &[u8],
     fields: &Vec<DbfFields>,
-    memos: &[u8],
+    memos: &Option<Vec<u8>>,
     memo_blocksize: &u16,
 ) -> String {
     let mut result: String = String::from("");
@@ -120,7 +123,7 @@ fn get_memo_content(bytes: &[u8], block: u32, memo_blocksize: &u16) -> String {
 fn get_field_content_as_string(
     bytes: &[u8],
     fieldtype: &char,
-    memos: &[u8],
+    memos: &Option<Vec<u8>>,
     memo_blocksize: &u16,
 ) -> String {
     match fieldtype {
@@ -161,7 +164,10 @@ fn get_field_content_as_string(
             if block_number == 0 {
                 String::from("")
             } else {
-                get_memo_content(memos, block_number, memo_blocksize)
+                match memos {
+                    Some(memo) => get_memo_content(memo, block_number, memo_blocksize),
+                    None => String::from("memofile missing"),
+                }
             }
         }
         'B' => String::from("missing implementation for double"),
@@ -175,21 +181,35 @@ fn get_field_content_as_string(
     }
 }
 
-fn latin1_to_string(latin1_data: &[u8]) -> String {
-    latin1_data
-        .iter()
-        .filter(|b| **b != 0)
-        .map(|&c| c as char)
-        .collect()
-}
-
-fn main() {
-    let dbffile = std::fs::read("c:/Users/Hagen/RustProjects/dbfstuff/testdata/ama.dbf").unwrap();
-    let memofile = std::fs::read("c:/Users/Hagen/RustProjects/dbfstuff/testdata/ama.fpt").unwrap();
+fn convert_dbf_to_csv(table: &PathBuf) {
+    let dbffile = std::fs::read(&table).unwrap();
+    let memopath = table
+        .to_str()
+        .unwrap()
+        .to_lowercase()
+        .replace(".dbf", ".fpt");
+    let mut memofile: Option<Vec<u8>> = match std::fs::read(&memopath) {
+        Ok(file) => Some(file),
+        _ => None,
+    };
+    if memofile == None {
+        let memopath = table
+            .to_str()
+            .unwrap()
+            .to_lowercase()
+            .replace(".dbf", ".dbt");
+        memofile = match std::fs::read(&memopath) {
+            Ok(file) => Some(file),
+            _ => None,
+        };
+    }
     let header = DbfHeader::new(&dbffile[0..32]);
     let fields = get_fields(&dbffile);
     let field_header = get_field_header_as_csv(&fields);
-    let memo_header = MemoHeader::new(&memofile[0..512]);
+    let memo_header = match &memofile {
+        Some(file) => MemoHeader::new(&file[0..512]),
+        None => MemoHeader { block_size: 0 },
+    };
     let mut linenumber = 0;
     let mut allcsv = field_header.clone();
     while linenumber < header.records {
@@ -204,9 +224,35 @@ fn main() {
         ));
         linenumber += 1;
     }
-    std::fs::write(
-        "c:/Users/Hagen/RustProjects/dbfstuff/testdata/ama.csv",
-        allcsv,
-    )
-    .unwrap();
+    let resultpath = table
+        .to_str()
+        .unwrap()
+        .to_lowercase()
+        .replace(".dbf", ".csv");
+    std::fs::write(resultpath, allcsv).unwrap();
+}
+
+fn latin1_to_string(latin1_data: &[u8]) -> String {
+    latin1_data
+        .iter()
+        .filter(|b| **b != 0)
+        .map(|&c| c as char)
+        .collect()
+}
+
+fn main() {
+    let mut tablefiles: Vec<PathBuf> = vec![];
+    if let Ok(entries) = fs::read_dir("c:/Users/Hagen/RustProjects/dbfstuff/testdata/") {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.extension().unwrap().to_ascii_lowercase() == "dbf" {
+                    tablefiles.push(path);
+                }
+            }
+        }
+    }
+    for table in tablefiles {
+        convert_dbf_to_csv(&table);
+    }
 }
