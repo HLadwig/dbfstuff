@@ -66,7 +66,7 @@ fn get_sizes_for_header(bytes: &[u8]) -> usize {
     let mut i = 0;
     let mut result = 0;
     while i < bytes.len() {
-        result += bytes[i] as usize * ((256 as usize).pow(i as u32));
+        result += bytes[i] as usize * (256_usize.pow(i as u32));
         i += 1;
     }
     result
@@ -76,7 +76,7 @@ fn get_fields(bytes: &[u8]) -> Vec<DbfFields> {
     let mut next_field_record_startbyte = 32;
     let field_definition_end_marker = 0x0D;
     let mut result = vec![];
-    while *&bytes[next_field_record_startbyte] != field_definition_end_marker {
+    while bytes[next_field_record_startbyte] != field_definition_end_marker {
         let field =
             DbfFields::new(&bytes[next_field_record_startbyte..next_field_record_startbyte + 32]);
         result.push(field);
@@ -108,7 +108,7 @@ fn get_record_as_csv(
             memos,
             memo_blocksize,
         );
-        result.push_str(&content.trim());
+        result.push_str(content.trim());
         result.push(';');
     }
     String::from(result.trim_end_matches(';'))
@@ -154,13 +154,13 @@ fn get_field_content_as_string(
         'I' => u32::from_le_bytes(bytes.try_into().unwrap()).to_string(),
         'Y' => String::from("missing implementation for currency"),
         'M' => {
-            let block_number: u32;
+            let block_number;
             if bytes.len() == 4 {
                 block_number = u32::from_le_bytes(bytes.try_into().unwrap());
             } else {
                 let block_string = latin1_to_string(bytes);
-                block_number = u32::from_str_radix(&block_string, 10).unwrap();
-            }
+                block_number = block_string.parse::<u32>().unwrap();
+            };
             if block_number == 0 {
                 String::from("")
             } else {
@@ -182,7 +182,7 @@ fn get_field_content_as_string(
 }
 
 fn convert_dbf_to_csv(table: &PathBuf) {
-    let dbffile = std::fs::read(&table).unwrap();
+    let dbffile = std::fs::read(table).unwrap();
     let memopath = table
         .to_str()
         .unwrap()
@@ -192,7 +192,7 @@ fn convert_dbf_to_csv(table: &PathBuf) {
         Ok(file) => Some(file),
         _ => None,
     };
-    if memofile == None {
+    if memofile.is_none() {
         let memopath = table
             .to_str()
             .unwrap()
@@ -215,7 +215,7 @@ fn convert_dbf_to_csv(table: &PathBuf) {
     while linenumber < header.records {
         let startbyte =
             (header.bytes_header as u32 + linenumber * header.bytes_record as u32) as usize;
-        let endbyte = (startbyte + header.bytes_record as usize) as usize;
+        let endbyte = startbyte + header.bytes_record as usize;
         allcsv.push_str(&get_record_as_csv(
             &dbffile[startbyte..endbyte],
             &fields,
@@ -243,12 +243,10 @@ fn latin1_to_string(latin1_data: &[u8]) -> String {
 fn main() {
     let mut tablefiles: Vec<PathBuf> = vec![];
     if let Ok(entries) = fs::read_dir("c:/Users/Hagen/RustProjects/dbfstuff/testdata/") {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.extension().unwrap().to_ascii_lowercase() == "dbf" {
-                    tablefiles.push(path);
-                }
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().unwrap().to_ascii_lowercase() == "dbf" {
+                tablefiles.push(path);
             }
         }
     }
