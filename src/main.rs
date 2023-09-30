@@ -111,6 +111,7 @@ fn get_record_as_csv(
         result.push_str(content.trim());
         result.push(';');
     }
+    result.push_str("\r\n");
     String::from(result.trim_end_matches(';'))
 }
 
@@ -212,16 +213,22 @@ fn convert_dbf_to_csv(table: &PathBuf) {
     };
     let mut linenumber = 0;
     let mut allcsv = field_header.clone();
+    let mut delcsv = String::from("");
     while linenumber < header.records {
         let startbyte =
             (header.bytes_header as u32 + linenumber * header.bytes_record as u32) as usize;
         let endbyte = startbyte + header.bytes_record as usize;
-        allcsv.push_str(&get_record_as_csv(
+        let line = get_record_as_csv(
             &dbffile[startbyte..endbyte],
             &fields,
             &memofile,
             &memo_header.block_size,
-        ));
+        );
+        if dbffile[startbyte] == 32 {
+            allcsv.push_str(&line);
+        } else {
+            delcsv.push_str(&line);
+        }
         linenumber += 1;
     }
     let resultpath = table
@@ -229,7 +236,12 @@ fn convert_dbf_to_csv(table: &PathBuf) {
         .unwrap()
         .to_lowercase()
         .replace(".dbf", ".csv");
-    std::fs::write(resultpath, allcsv).unwrap();
+    std::fs::write(&resultpath, allcsv).unwrap();
+    if !delcsv.is_empty() {
+        delcsv.insert_str(0, &field_header);
+        let delpath = resultpath.replace(".csv", "_del.csv");
+        std::fs::write(delpath, delcsv).unwrap();
+    }
 }
 
 fn latin1_to_string(latin1_data: &[u8]) -> String {
