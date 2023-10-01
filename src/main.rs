@@ -1,5 +1,7 @@
+use clap::Parser;
 use std::fs;
 use std::path::PathBuf;
+use std::time;
 
 #[derive(Debug)]
 struct DbfHeader {
@@ -194,11 +196,7 @@ fn convert_dbf_to_csv(table: &PathBuf) {
         _ => None,
     };
     if memofile.is_none() {
-        let memopath = table
-            .to_str()
-            .unwrap()
-            .to_lowercase()
-            .replace(".dbf", ".dbt");
+        let memopath = memopath.replace(".fpt", "dbt");
         memofile = match std::fs::read(&memopath) {
             Ok(file) => Some(file),
             _ => None,
@@ -252,9 +250,17 @@ fn latin1_to_string(latin1_data: &[u8]) -> String {
         .collect()
 }
 
+#[derive(Parser)]
+struct Args {
+    #[arg(default_value = "c:/Users/Hagen/RustProjects/dbfstuff/testdata/")]
+    path: std::path::PathBuf,
+}
+
 fn main() {
+    let timer = time::Instant::now();
+    let args = Args::parse();
     let mut tablefiles: Vec<PathBuf> = vec![];
-    if let Ok(entries) = fs::read_dir("c:/Users/Hagen/RustProjects/dbfstuff/testdata/") {
+    if let Ok(entries) = fs::read_dir(&args.path) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().unwrap().to_ascii_lowercase() == "dbf" {
@@ -262,7 +268,12 @@ fn main() {
             }
         }
     }
-    for table in tablefiles {
-        convert_dbf_to_csv(&table);
+    for table in &tablefiles {
+        convert_dbf_to_csv(table);
     }
+    println!(
+        "It took {:?} to convert {:?} files",
+        timer.elapsed(),
+        tablefiles.len()
+    );
 }
