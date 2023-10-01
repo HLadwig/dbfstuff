@@ -268,12 +268,17 @@ fn main() {
             }
         }
     }
+    let pb = indicatif::ProgressBar::new(tablefiles.len() as u64);
     for table in &tablefiles {
         convert_dbf_to_csv(table);
+        pb.println(format!("{:?} converted", table));
+        pb.inc(1);
     }
-    println!(
+    let message = format!(
         "It took {:?} to convert {:?} files",
         timer.elapsed(),
-        tablefiles.len()
+        tablefiles.len(),
     );
+    //pb.finish_with_message(message); doesn't seem to work
+    println!("{}", message);
 }
