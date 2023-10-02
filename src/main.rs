@@ -24,15 +24,34 @@ impl DbfHeader {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum MemoFileType {
+    Old,
+    New,
+}
+
 #[derive(Debug)]
 struct MemoHeader {
+    memo_type: MemoFileType,
     block_size: u16,
 }
 
 impl MemoHeader {
     fn new(bytes: &[u8]) -> Self {
+        let size = u16::from_be_bytes(bytes[6..8].try_into().unwrap());
         Self {
-            block_size: u16::from_be_bytes(bytes[6..8].try_into().unwrap()),
+            memo_type: if size > 0 {
+                MemoFileType::New
+            } else {
+                MemoFileType::Old
+            },
+            block_size: {
+                if size > 0 {
+                    size
+                } else {
+                    u16::from_le_bytes(bytes[20..22].try_into().unwrap())
+                }
+            },
         }
     }
 }
@@ -43,7 +62,7 @@ enum FieldTypes {}
 struct DbfFields {
     fieldname: String,
     fieldtype: char, // FieldTypes,
-    displacement: usize,
+    displacement: u32,
     length: usize,
     decimal_places: usize,
 }
@@ -53,7 +72,7 @@ impl DbfFields {
         Self {
             fieldname: latin1_to_string(&bytes[0..11]),
             fieldtype: bytes[11] as char,
-            displacement: get_sizes_for_header(&bytes[12..16]),
+            displacement: u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
             length: bytes[16] as usize,
             decimal_places: bytes[17] as usize,
         }
@@ -64,23 +83,20 @@ fn get_date_for_header(bytes: &[u8]) -> String {
     format!("{}.{}.{}", bytes[2], bytes[1], bytes[0] as usize + 1900)
 }
 
-fn get_sizes_for_header(bytes: &[u8]) -> usize {
-    let mut i = 0;
-    let mut result = 0;
-    while i < bytes.len() {
-        result += bytes[i] as usize * (256_usize.pow(i as u32));
-        i += 1;
-    }
-    result
-}
-
 fn get_fields(bytes: &[u8]) -> Vec<DbfFields> {
     let mut next_field_record_startbyte = 32;
     let field_definition_end_marker = 0x0D;
     let mut result = vec![];
+    let mut last_displacement = 1; // das erste Feld hat displacement 1 wegen delete-Flag
     while bytes[next_field_record_startbyte] != field_definition_end_marker {
-        let field =
+        let mut field =
             DbfFields::new(&bytes[next_field_record_startbyte..next_field_record_startbyte + 32]);
+        if field.displacement == 0 {
+            // jedes Feld muss displacement haben
+            // gehen davon aus, dass es nie angegeben ist wenn es einmal fehlt
+            field.displacement = last_displacement;
+            last_displacement += field.length as u32;
+        }
         result.push(field);
         next_field_record_startbyte += 32;
     }
@@ -93,41 +109,47 @@ fn get_field_header_as_csv(fields: &Vec<DbfFields>) -> String {
         result.push_str(&field.fieldname);
         result.push(';');
     }
-    String::from(result.trim_end_matches(';'))
+    result.push_str("\r\n");
+    result
 }
 
 fn get_record_as_csv(
     bytes: &[u8],
     fields: &Vec<DbfFields>,
     memos: &Option<Vec<u8>>,
-    memo_blocksize: &u16,
+    memo_header: &MemoHeader,
 ) -> String {
     let mut result: String = String::from("");
     for field in fields {
         let content = get_field_content_as_string(
-            &bytes[field.displacement..field.displacement + field.length],
+            &bytes[field.displacement as usize..field.displacement as usize + field.length],
             &field.fieldtype,
             memos,
-            memo_blocksize,
+            memo_header,
         );
         result.push_str(content.trim());
         result.push(';');
     }
     result.push_str("\r\n");
-    String::from(result.trim_end_matches(';'))
+    result
 }
 
-fn get_memo_content(bytes: &[u8], block: u32, memo_blocksize: &u16) -> String {
-    let startbyte = (block * *memo_blocksize as u32) as usize;
-    let length = u32::from_be_bytes(bytes[startbyte + 4..startbyte + 8].try_into().unwrap());
-    latin1_to_string(&bytes[startbyte + 8..startbyte + 8 + length as usize])
+fn get_memo_content(bytes: &[u8], block: u32, memo_header: &MemoHeader) -> String {
+    let startbyte = (block * memo_header.block_size as u32) as usize;
+    if memo_header.memo_type == MemoFileType::New {
+        let length = u32::from_be_bytes(bytes[startbyte + 4..startbyte + 8].try_into().unwrap());
+        latin1_to_string(&bytes[startbyte + 8..startbyte + 8 + length as usize])
+    } else {
+        let length = u32::from_le_bytes(bytes[startbyte + 4..startbyte + 8].try_into().unwrap());
+        latin1_to_string(&bytes[startbyte + 8..startbyte + length as usize])
+    }
 }
 
 fn get_field_content_as_string(
     bytes: &[u8],
     fieldtype: &char,
     memos: &Option<Vec<u8>>,
-    memo_blocksize: &u16,
+    memo_header: &MemoHeader,
 ) -> String {
     match fieldtype {
         'C' | 'N' => latin1_to_string(bytes),
@@ -161,14 +183,23 @@ fn get_field_content_as_string(
             if bytes.len() == 4 {
                 block_number = u32::from_le_bytes(bytes.try_into().unwrap());
             } else {
-                let block_string = latin1_to_string(bytes);
-                block_number = block_string.parse::<u32>().unwrap();
+                let mut block_string = latin1_to_string(bytes);
+                block_string = String::from(block_string.trim());
+                block_number = match block_string.parse::<u32>() {
+                    Ok(nmb) => nmb,
+                    _ => 0,
+                };
             };
             if block_number == 0 {
                 String::from("")
             } else {
+                //eprintln!("Memo block number: {}", block_number);
                 match memos {
-                    Some(memo) => get_memo_content(memo, block_number, memo_blocksize),
+                    Some(memo) => {
+                        "\"".to_owned()
+                            + get_memo_content(memo, block_number, memo_header).as_str()
+                            + "\""
+                    }
                     None => String::from("memofile missing"),
                 }
             }
@@ -196,19 +227,25 @@ fn convert_dbf_to_csv(table: &PathBuf) {
         _ => None,
     };
     if memofile.is_none() {
-        let memopath = memopath.replace(".fpt", "dbt");
+        let memopath = memopath.replace(".fpt", ".dbt");
         memofile = match std::fs::read(&memopath) {
             Ok(file) => Some(file),
             _ => None,
         };
     }
     let header = DbfHeader::new(&dbffile[0..32]);
+    //eprintln!("DbfHeader: {:?}", header);
     let fields = get_fields(&dbffile);
+    //eprintln!("DbfFields: {:?}", fields);
     let field_header = get_field_header_as_csv(&fields);
     let memo_header = match &memofile {
         Some(file) => MemoHeader::new(&file[0..512]),
-        None => MemoHeader { block_size: 0 },
+        None => MemoHeader {
+            memo_type: MemoFileType::New,
+            block_size: 0,
+        },
     };
+    //eprintln!("Memoheader: {:?}", memo_header);
     let mut linenumber = 0;
     let mut allcsv = field_header.clone();
     let mut delcsv = String::from("");
@@ -220,7 +257,7 @@ fn convert_dbf_to_csv(table: &PathBuf) {
             &dbffile[startbyte..endbyte],
             &fields,
             &memofile,
-            &memo_header.block_size,
+            &memo_header,
         );
         if dbffile[startbyte] == 32 {
             allcsv.push_str(&line);
@@ -263,8 +300,10 @@ fn main() {
     if let Ok(entries) = fs::read_dir(&args.path) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().unwrap().to_ascii_lowercase() == "dbf" {
-                tablefiles.push(path);
+            if let Some(extension) = path.extension() {
+                if extension.to_ascii_lowercase() == "dbf" {
+                    tablefiles.push(path);
+                }
             }
         }
     }
