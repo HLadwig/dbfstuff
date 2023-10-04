@@ -126,7 +126,7 @@ fn get_record_as_csv(
             memos,
             memo_header,
         );
-        result.push_str(content.trim());
+        result.push_str(content.as_str()); //.trim());
         result.push(';');
     }
     result.push_str("\r\n");
@@ -308,7 +308,7 @@ fn write_field_content_to_file(
     match fieldtype {
         'C' | 'N' => write_file.write_all(bytes).unwrap(),
         'D' => {
-            if bytes.len() == 8 {
+            if bytes.len() == 8 && !bytes.iter().all(|&x| x == 0x20) {
                 write_file.write_all(&bytes[6..8]).unwrap();
                 write_file.write_all(b".").unwrap();
                 write_file.write_all(&bytes[4..6]).unwrap();
