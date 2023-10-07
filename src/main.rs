@@ -1,4 +1,6 @@
 use clap::Parser;
+use encoding::label::encoding_from_whatwg_label;
+use encoding::{DecoderTrap, EncodingRef};
 use std::fs::{self, File};
 use std::io::{LineWriter, Write};
 use std::path::PathBuf;
@@ -11,6 +13,7 @@ struct DbfHeader {
     records: u32,
     bytes_header: u16,
     bytes_record: u16,
+    language: u8,
 }
 
 impl DbfHeader {
@@ -21,6 +24,7 @@ impl DbfHeader {
             records: u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
             bytes_header: u16::from_le_bytes(bytes[8..10].try_into().unwrap()),
             bytes_record: u16::from_le_bytes(bytes[10..12].try_into().unwrap()),
+            language: bytes[29],
         }
     }
 }
@@ -117,6 +121,7 @@ fn get_record_as_csv(
     fields: &Vec<DbfFields>,
     memos: &Option<Vec<u8>>,
     memo_header: &MemoHeader,
+    use_encoding: EncodingRef,
 ) -> String {
     let mut result: String = String::from("");
     for field in fields {
@@ -125,6 +130,7 @@ fn get_record_as_csv(
             &field.fieldtype,
             memos,
             memo_header,
+            use_encoding,
         );
         result.push_str(content.as_str()); //.trim());
         result.push(';');
@@ -133,14 +139,29 @@ fn get_record_as_csv(
     result
 }
 
-fn get_memo_content(bytes: &[u8], block: u32, memo_header: &MemoHeader) -> String {
+fn get_memo_content(
+    bytes: &[u8],
+    block: u32,
+    memo_header: &MemoHeader,
+    use_encoding: EncodingRef,
+) -> String {
     let startbyte = (block * memo_header.block_size as u32) as usize;
     if memo_header.memo_type == MemoFileType::New {
         let length = u32::from_be_bytes(bytes[startbyte + 4..startbyte + 8].try_into().unwrap());
-        latin1_to_string(&bytes[startbyte + 8..startbyte + 8 + length as usize])
+        use_encoding
+            .decode(
+                &bytes[startbyte + 8..startbyte + 8 + length as usize],
+                DecoderTrap::Ignore,
+            )
+            .unwrap()
     } else {
         let length = u32::from_le_bytes(bytes[startbyte + 4..startbyte + 8].try_into().unwrap());
-        latin1_to_string(&bytes[startbyte + 8..startbyte + length as usize])
+        use_encoding
+            .decode(
+                &bytes[startbyte + 8..startbyte + length as usize],
+                DecoderTrap::Ignore,
+            )
+            .unwrap()
     }
 }
 
@@ -149,11 +170,12 @@ fn get_field_content_as_string(
     fieldtype: &char,
     memos: &Option<Vec<u8>>,
     memo_header: &MemoHeader,
+    use_encoding: EncodingRef,
 ) -> String {
     match fieldtype {
-        'C' | 'N' => latin1_to_string(bytes),
+        'C' | 'N' => use_encoding.decode(bytes, DecoderTrap::Ignore).unwrap(),
         'D' => {
-            let yyyymmdd = latin1_to_string(bytes);
+            let yyyymmdd = use_encoding.decode(bytes, DecoderTrap::Ignore).unwrap();
             if yyyymmdd.trim().len() != 8 {
                 String::from("")
             } else {
@@ -167,10 +189,10 @@ fn get_field_content_as_string(
         }
         'F' => String::from("missing implementation for float"),
         'L' => {
-            let value = latin1_to_string(bytes);
-            match value.as_str() {
-                "y" | "Y" | "t" | "T" => String::from("true"),
-                "n" | "N" | "f" | "F" => String::from("false"),
+            match bytes {
+                //value.as_str() {
+                b"y" | b"Y" | b"t" | b"T" => String::from("true"),
+                b"n" | b"N" | b"f" | b"F" => String::from("false"),
                 _ => String::from(""),
             }
         }
@@ -182,7 +204,7 @@ fn get_field_content_as_string(
             if bytes.len() == 4 {
                 block_number = u32::from_le_bytes(bytes.try_into().unwrap());
             } else {
-                let mut block_string = latin1_to_string(bytes);
+                let mut block_string = use_encoding.decode(bytes, DecoderTrap::Ignore).unwrap();
                 block_string = String::from(block_string.trim());
                 block_number = match block_string.parse::<u32>() {
                     Ok(nmb) => nmb,
@@ -196,7 +218,8 @@ fn get_field_content_as_string(
                 match memos {
                     Some(memo) => {
                         "\"".to_owned()
-                            + get_memo_content(memo, block_number, memo_header).as_str()
+                            + get_memo_content(memo, block_number, memo_header, use_encoding)
+                                .as_str()
                             + "\""
                     }
                     None => String::from("memofile missing"),
@@ -215,7 +238,7 @@ fn get_field_content_as_string(
 }
 
 fn convert_dbf_to_csv(table: &PathBuf) {
-    let dbffile = std::fs::read(table).unwrap();
+    let mut dbffile = std::fs::read(table).unwrap();
     let memopath = table
         .to_str()
         .unwrap()
@@ -248,6 +271,30 @@ fn convert_dbf_to_csv(table: &PathBuf) {
     let mut linenumber = 0;
     let mut allcsv = field_header.clone();
     let mut delcsv = String::from("");
+
+    if header.language == 0x10 {
+        // bytes der Sonderzeichen ersetzen
+        dbffile = dbffile
+            .iter()
+            .map(|x| match x {
+                0x8e => 0xc4,
+                0x84 => 0xe4,
+                0x99 => 0xd6,
+                0x94 => 0xf6,
+                0x9a => 0xdc,
+                0x81 => 0xfc,
+                0xe1 => 0xdf,
+                _ => *x,
+            })
+            .collect();
+    }
+    let encoding_label = match header.language {
+        0x10 => "windows-1252", // wird nicht von encoding unterstuetzt
+        0x03 => "windows-1252",
+        _ => "windows-1252",
+    };
+    let use_encoding = encoding_from_whatwg_label(encoding_label).unwrap();
+
     while linenumber < header.records {
         let startbyte =
             (header.bytes_header as u32 + linenumber * header.bytes_record as u32) as usize;
@@ -257,6 +304,7 @@ fn convert_dbf_to_csv(table: &PathBuf) {
             &fields,
             &memofile,
             &memo_header,
+            use_encoding,
         );
         if dbffile[startbyte] == 32 {
             allcsv.push_str(&line);
@@ -499,8 +547,8 @@ fn main() {
     }
     let pb = indicatif::ProgressBar::new(tablefiles.len() as u64);
     for table in &tablefiles {
-        write_dbf_to_csv(table);
-        //convert_dbf_to_csv(table);
+        //write_dbf_to_csv(table);
+        convert_dbf_to_csv(table);
         pb.println(format!("{:?} converted", table));
         pb.inc(1);
     }
