@@ -1,7 +1,9 @@
 # dbfstuff
 Read/convert DBF-files with Rust
 ## What does it do?
-Command line tool that converts every dbf-file in the given directory into a csv-file. Contents of memofields (from fpt-/dbt-files) are being included.
+Command line tool that converts every dbf file in the given directory (the only parameter) into a csv file. Contents of memofields (from fpt/dbt files) are being included.
+
+For the dbf file a csv file with the same name gets generated. A second csv with the extension '_del' in the name is also generated. It contains the entries of the dbf that had the delete byte set.
 ## How did it came to be?
 At work I had a set of dbf-files that weren't working with my standard dbf software (turns out the offset in the field definitions was missing). I was in the process of learning Rust, so I took this as my project.
 
