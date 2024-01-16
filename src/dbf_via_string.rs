@@ -51,6 +51,18 @@ fn get_memo_content(
     }
 }
 
+fn get_memo_content_fix_blocksize(bytes: &[u8], block: u32, use_encoding: EncodingRef) -> String {
+    let blocksize = 512;
+    let startbyte = (block * blocksize) as usize;
+    let length = bytes[startbyte..]
+        .iter()
+        .take_while(|&&x| x != 0x1a)
+        .count();
+    use_encoding
+        .decode(&bytes[startbyte..startbyte + length], DecoderTrap::Ignore)
+        .unwrap()
+}
+
 fn get_field_content_as_string(
     bytes: &[u8],
     fieldtype: &char,
@@ -104,7 +116,8 @@ fn get_field_content_as_string(
                 match memos {
                     Some(memo) => {
                         "\"".to_owned()
-                            + get_memo_content(memo, block_number, memo_header, use_encoding)
+                        //+ get_memo_content(memo, block_number, memo_header, use_encoding)
+			    + get_memo_content_fix_blocksize(memo, block_number, use_encoding)
                                 .as_str()
                             + "\""
                     }
